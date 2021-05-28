@@ -12,7 +12,7 @@ import pandas as pd
 import plotly
 import regex as re
 
-WORD_LENGTH = 10
+WORD_LENGTH = 1001
 
 
 def store_words(words):
@@ -30,7 +30,10 @@ def store_predictions(prediction, model, device):
             torch.from_numpy(prediction[i]).unsqueeze(0).float().to(device)
         )
         resultNumpy = result.detach().numpy()
-        f.write(str(i) + "," + str(resultNumpy) + "\n")
+        resultNoLineBreaks = (
+            resultNumpy.tolist()
+        )  # np.array_repr(resultNumpy).replace('\n', '')
+        f.write(str(i) + "," + str(resultNoLineBreaks) + "\n")
     f.close()
 
 
@@ -93,34 +96,25 @@ def perform_one_hot_encoding(training_data):
 
 class WEMB(nn.Module):
     def __init__(self, input_size, hidden_size):
-        super(WEMB, self).__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
+        super().__init__()
+        self.layer1 = nn.Linear(input_size, hidden_size)
+        self.relu = nn.ReLU()
+        self.layer2 = nn.Linear(hidden_size, input_size)
         self.softmax = nn.Softmax(dim=1)
 
-        self.l1 = nn.Linear(self.input_size, self.hidden_size, bias=False)
-
-        self.hiddenLayers = nn.ModuleList()
-        for i in range(0, 6):
-            self.hiddenLayers.append(
-                nn.Linear(self.input_size, self.hidden_size, bias=False)
-            )
-        self.l2 = nn.Linear(self.hidden_size, self.input_size, bias=False)
-
-    def forward(self, x):
-        out_bn = self.l1(x)  # bn - bottle_neck
-        for layer in self.hiddenLayers:
-            out_bn = layer(x)
-        out = self.l2(out_bn)
-        out = self.softmax(out)
-        return out, out_bn
+    def forward(self, data_input):
+        out_bn = self.layer1(data_input)
+        output_layer1 = self.relu(out_bn)
+        output_layer2 = self.layer2(output_layer1)
+        output_layer3 = self.softmax(output_layer2)
+        return output_layer3, out_bn
 
 
 def train_the_model(onehot_label_x, onehot_label_y):
     input_size = WORD_LENGTH
-    hidden_size = 64
+    hidden_size = 32
     learning_rate = 0.01
-    num_epochs = 1000
+    num_epochs = 1
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -156,7 +150,7 @@ def train_the_model(onehot_label_x, onehot_label_y):
             optimizer.step()
         loss_val.append(loss.item())
 
-        if (epoch + 1) % 100 == 0:
+        if (epoch + 1) % 1 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}")
     return model, device, loss_val
 
@@ -164,24 +158,14 @@ def train_the_model(onehot_label_x, onehot_label_y):
 def main():
 
     #### preprocessing
+    filename = "./text/100-0.txt"
+    with open(filename) as f:
+        text = f.read()
 
-    corpus = [
-        "the sky is blue",
-        "the grass is green",
-        "cat dog",
-        "dog cat",
-        "a blue sky",
-        "a green grass",
-    ]
-    # TODO:
-    # filename = './arabian_nights.txt'
-    # with open(filename) as f:
-    #     text = f.read()
-
-    # text = re.sub(r'(M\w{1,2})\.', r'\1', text)
-    # text = re.sub(r'(\n)', r'', text)
-
-    # corpus = re.split(r' *[\.\?!][\'"\)\]]* *', text.lower())
+    text = re.sub(r"(M\w{1,2})\.", r"\1", text)
+    text = re.sub(r"(\n)", r"", text)
+    text = re.sub("[\,\_,\],\[]", "", text)
+    corpus = re.split(r' *[\.\?!][\'"\)\]]* *', text.lower())
     # print(corpus)
 
     wordFrequency = {}
@@ -200,13 +184,13 @@ def main():
     sortedWordFrequencyList = list(sortedWordFrequency.keys())
     # print(sortedWordFrequencyList)
     # TODO: without the most frequent 100
-    # i = 0
-    # while (i < 100):
-    # 	sortedWordFrequencyList.pop()
-    # 	i = i + 1
+    i = 0
+    while i < 100:
+        sortedWordFrequencyList.pop()
+        i = i + 1
     # print(sortedWordFrequencyList)
     # TODO: add subscript, only the 10000 most frequent after the stopwords.
-    words = sortedWordFrequencyList  # [-13:]
+    words = sortedWordFrequencyList[-(WORD_LENGTH - 1) :]
     store_words(words)
     print(words)
     print(len(words))
@@ -218,7 +202,7 @@ def main():
 
     idx_2_word, word_2_idx = word_indexer(corpus, words)
     encoded_docs = [one_hot_map(d, word_2_idx, words) for d in corpus]
-    max_len = 30
+    max_len = WORD_LENGTH - 1
     padded_docs = pad_sequences(encoded_docs, maxlen=max_len, padding="post")
     training_data = build_input_target_pairs(padded_docs)
 
@@ -230,6 +214,7 @@ def main():
     onehot_label_y = torch.from_numpy(onehot_label_y)
 
     #### training the model.
+    print("the learning has started.")
     model, device, loss_val = train_the_model(onehot_label_x, onehot_label_y)
 
     #### testing the model.
